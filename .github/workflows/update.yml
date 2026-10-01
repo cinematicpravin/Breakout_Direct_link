@@ -1,9 +1,10 @@
 name: Update data
 
 on:
-  workflow_dispatch:        # manual "Run workflow" button
+  workflow_dispatch:
   schedule:
-    - cron: "50 11 * * 1-5" # ~5:20 PM IST, Mon-Fri
+    - cron: "*/30 4-10 * * 1-5"   # market 30 min : roj 9:50 AM te 3:50 PM IST, Mon-Fri, pratyek 1 tasa
+    - cron: "50 11 * * 1-5"     # market band jhalyavar 5:20 PM IST
 
 permissions:
   contents: write
