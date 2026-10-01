@@ -15,9 +15,9 @@ import yfinance as yf
 from tradingview_screener import Query, col
 
 # ---- Universe (edit these if you want a wider / narrower list) ----
-MIN_PRICE = 30
-MIN_MCAP = 5_000_000_000      # 5B INR
-MIN_TURNOVER = 50_000_000     # 50M INR (price x volume)
+MIN_PRICE = 10
+MIN_MCAP = 1_000_000_000      # 5B INR
+MIN_TURNOVER = 10_000_000     # 50M INR (price x volume)
 BARS = 330                    # daily bars stored per stock
 CHUNK = 100
 
