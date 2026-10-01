@@ -19,10 +19,13 @@ jobs:
           python-version: "3.12"
       - run: pip install yfinance pandas tradingview-screener
       - run: python fetch_data.py
-      - name: Commit data.json
+      - name: Publish data.json to the "data" branch (history never grows)
         run: |
+          mkdir /tmp/pub && cp data.json /tmp/pub/
+          cd /tmp/pub
+          git init -q -b data
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add data.json
-          git commit -m "Update data" || echo "No changes"
-          git push
+          git commit -q -m "Update data"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
