@@ -1,13 +1,16 @@
 name: Update data
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # manual "Run workflow" button
   schedule:
-    - cron: "*/30 4-10 * * 1-5"   # market 30 min : roj 9:50 AM te 3:50 PM IST, Mon-Fri, pratyek 1 tasa
-    - cron: "50 11 * * 1-5"     # market band jhalyavar 5:20 PM IST
+    - cron: "50 11 * * 1-5" # ~5:20 PM IST, Mon-Fri
 
 permissions:
   contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
 
 jobs:
   update:
@@ -21,11 +24,11 @@ jobs:
       - run: python fetch_data.py
       - name: Publish data.json to the "data" branch (history never grows)
         run: |
-          mkdir /tmp/pub && cp data.json /tmp/pub/
+          mkdir /tmp/pub && cp data_d.json data_w.json data_m.json /tmp/pub/
           cd /tmp/pub
           git init -q -b data
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add data.json
+          git add data_d.json data_w.json data_m.json
           git commit -q -m "Update data"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
