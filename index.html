@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Breakout Screener</title>
+<style>
+  :root { --bg:#fff; --fg:#111; --muted:#666; --card:#f3f4f6; --line:#ddd; --accent:#2962ff; --up:#089981; --dn:#e53935; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#131722; --fg:#e6e8ec; --muted:#9aa0ab; --card:#1e222d; --line:#2e3340; --accent:#5b8cff; --up:#26a69a; --dn:#ef5350; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:12px; }
+  details { background:var(--card); border-radius:10px; margin-bottom:10px; padding:10px 12px; }
+  summary { font-weight:600; font-size:15px; cursor:pointer; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-top:10px; }
+  label { display:block; font-size:12px; color:var(--muted); }
+  input[type=number], select { width:100%; margin-top:3px; background:var(--bg); color:var(--fg);
+         border:1px solid var(--line); border-radius:8px; padding:8px; font-size:15px; }
+  label.chk { display:flex; align-items:center; gap:8px; font-size:14px; color:var(--fg); padding-top:18px; }
+  .bar { display:flex; gap:10px; align-items:center; margin:12px 0; flex-wrap:wrap; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:10px; padding:12px 22px; font-size:16px; font-weight:600; }
+  button.ghost { background:var(--card); color:var(--fg); }
+  #status { font-size:14px; color:var(--muted); }
+  #status.err { color:var(--dn); }
+  .wrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; white-space:nowrap; }
+  th, td { padding:10px 12px; text-align:right; border-bottom:1px solid var(--line); }
+  th:first-child, td:first-child { text-align:left; position:sticky; left:0; background:var(--bg); }
+  th { background:var(--card); cursor:pointer; user-select:none; }
+  .up { color:var(--up); } .dn { color:var(--dn); }
+  .symc { display:flex; align-items:center; gap:8px; }
+  .ic { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:6px;
+        background:var(--card); color:var(--fg); border:1px solid var(--line); padding:0; font-size:11px; font-weight:700;
+        text-decoration:none; cursor:pointer; }
+  .ic svg { width:14px; height:14px; }
+  .ic.ok { color:var(--up); border-color:var(--up); }
+</style>
+</head>
+<body>
+<h1>Breakout Screener</h1>
+<div class="sub">Breakout Finder + Target Zones (daily bars) &middot; <span id="upd">loading data…</span></div>
+
+<div id="params"></div>
+
+<div class="bar">
+  <button id="run">Scan</button>
+  <button id="reset" class="ghost">Reset defaults</button>
+  <button id="upd_btn" class="ghost">⟳ Update data</button>
+  <button id="tok" class="ghost" title="Forget saved GitHub token">Reset token</button>
+  <span id="status"></span>
+</div>
+
+<div class="wrap" id="tableWrap" hidden>
+  <table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table>
+</div>
+
+<script>
+// ENGINE START ---------------------------------------------------------
+// Port of "Breakout Finder" + "Target Zones" (Pine v5) for one stock's daily bars.
+function pivotAt(arr, i, len, isHigh) {
+  const m = i - len;
+  if (m - len < 0) return NaN;
+  const v = arr[m];
+  for (let k = m - len; k <= i; k++) {
+    if (k === m) continue;
+    if (isHigh ? arr[k] > v : arr[k] < v) return NaN;
+  }
+  return v;
+}
+
+function analyze(S, P) {
+  const H = S.h, L = S.l, O = S.o, C = S.c, n = C.length;
+  const phval = [], phloc = [], plval = [], plloc = [];
+  let lastSLH = NaN, lastSLL = NaN;
+  let zone = null;
+  const signals = [];
+
+  for (let i = 0; i < n; i++) {
+    const ph = pivotAt(H, i, P.prd, true);
+    const pl = pivotAt(L, i, P.prd, false);
+    const sh = P.pivSL === P.prd ? ph : pivotAt(H, i, P.pivSL, true);
+    const sl = P.pivSL === P.prd ? pl : pivotAt(L, i, P.pivSL, false);
+    if (!isNaN(sh)) lastSLH = sh;
+    if (!isNaN(sl)) lastSLL = sl;
+
+    if (!isNaN(ph)) {
+      phval.unshift(ph); phloc.unshift(i - P.prd);
+      if (phval.length > 1)
+        for (let x = phloc.length - 1; x >= 1; x--)
+          if (i - phloc[x] > P.boLen) { phloc.pop(); phval.pop(); }
+    }
+    if (!isNaN(pl)) {
+      plval.unshift(pl); plloc.unshift(i - P.prd);
+      if (plval.length > 1)
+        for (let x = plloc.length - 1; x >= 1; x--)
+          if (i - plloc[x] > P.boLen) { plloc.pop(); plval.pop(); }
+    }
+
+    // channel width
+    const lll = Math.max(Math.min(i, P.chLook), 1);
+    let hi = -Infinity, lo = Infinity;
+    for (let k = Math.max(0, i - lll + 1); k <= i; k++) { if (H[k] > hi) hi = H[k]; if (L[k] < lo) lo = L[k]; }
+    const chw = (hi - lo) * P.thr / 100;
+
+    // highest/lowest of previous `prd` bars
+    let hgst = NaN, lwst = NaN;
+    if (i - P.prd >= 0) {
+      hgst = -Infinity; lwst = Infinity;
+      for (let k = i - P.prd; k <= i - 1; k++) { if (H[k] > hgst) hgst = H[k]; if (L[k] < lwst) lwst = L[k]; }
+    }
+
+    // ---- Bullish ----
+    let bomax = NaN, num = 0;
+    if (phval.length >= P.minTests && C[i] > O[i] && C[i] > hgst) {
+      bomax = phval[0];
+      let xx = 0;
+      for (let x = 0; x < phval.length; x++) {
+        if (phval[x] >= C[i]) break;
+        xx = x; bomax = Math.max(bomax, phval[x]);
+      }
+      if (xx >= P.minTests && O[i] <= bomax) {
+        for (let x = 0; x <= xx; x++) {
+          const pv = phval[x];
+          if (pv <= bomax && pv >= bomax - chw) num++;
+        }
+        if (num < P.minTests || hgst >= bomax) bomax = NaN;
+      } else bomax = NaN;
+    }
+    const bullBO = !isNaN(bomax) && num >= P.minTests;
+
+    // ---- Bearish ----
+    let bomin = NaN, num1 = 0;
+    if (plval.length >= P.minTests && C[i] < O[i] && C[i] < lwst) {
+      bomin = plval[0];
+      let xx = 0;
+      for (let x = 0; x < plval.length; x++) {
+        if (plval[x] <= C[i]) break;
+        xx = x; bomin = Math.min(bomin, plval[x]);
+      }
+      if (xx >= P.minTests && O[i] >= bomin) {
+        for (let x = 0; x <= xx; x++) {
+          const pv = plval[x];
+          if (pv >= bomin && pv <= bomin + chw) num1++;
+        }
+        if (num1 < P.minTests || lwst <= bomin) bomin = NaN;
+      } else bomin = NaN;
+    }
+    const bearBO = !isNaN(bomin) && num1 >= P.minTests;
+
+    // ---- Target zones ----
+    let sig = null;
+    if (bullBO) sig = { bar: i, bull: true, lvl: bomax, zone: null };
+    if (bearBO) sig = { bar: i, bull: false, lvl: bomin, zone: null };   // bearish wins if both
+    if (sig) signals.push(sig);
+
+    if (sig && !zone) {
+      const entry = sig.lvl;
+      const stop = sig.bull ? lastSLL : lastSLH;
+      const risk = sig.bull ? entry - stop : stop - entry;
+      if (risk > 0) {
+        const tgt = sig.bull ? entry + risk * P.rr : entry - risk * P.rr;
+        zone = { bar: i, bull: sig.bull, entry, stop, tgt, status: "Active", hitBar: null };
+        sig.zone = zone;
+      }
+    }
+    if (zone) {
+      const slHit = zone.bull
+        ? (P.slBasis === "Close" ? C[i] <= zone.stop : L[i] <= zone.stop)
+        : (P.slBasis === "Close" ? C[i] >= zone.stop : H[i] >= zone.stop);
+      const tgHit = zone.bull ? H[i] >= zone.tgt : L[i] <= zone.tgt;
+      if (tgHit || slHit) {
+        zone.status = slHit ? "SL hit" : "Target hit";   // if both on one bar, SL is assumed (conservative)
+        zone.hitBar = i;
+        zone = null;
+      }
+    }
+  }
+  return { signals };
+}
+
+function smaLast(arr, k) {
+  if (arr.length < k) return NaN;
+  let s = 0;
+  for (let i = arr.length - k; i < arr.length; i++) s += arr[i];
+  return s / k;
+}
+// ENGINE END -----------------------------------------------------------
+
+// ---------- Parameter definitions (same names as the indicator) ----------
+const GROUPS = [
+  { title: "Breakout Finder", open: true, fields: [
+    { k:"prd", label:"Period", def:5, min:2, step:1 },
+    { k:"boLen", label:"Max B (max breakout length)", def:200, min:30, max:300, step:1 },
+    { k:"thr", label:"Thre. % (threshold rate)", def:3.0, min:1, max:10, step:0.1 },
+    { k:"minTests", label:"Min Tests", def:2, min:1, step:1 },
+    { k:"chLook", label:"Channel lookback (bars)", def:300, min:10, max:300, step:1 },
+  ]},
+  { title: "Target Zones", open: true, fields: [
+    { k:"pivSL", label:"Pivot SL", def:5, min:2, step:1 },
+    { k:"rr", label:"Risk : Reward", def:1.0, min:0.1, step:0.1 },
+    { k:"slBasis", label:"SL Hit", type:"select", def:"Close", options:["Close","Wick"] },
+  ]},
+  { title: "Scan filters", open: true, fields: [
+    { k:"tf", label:"Timeframe", type:"select", def:"Daily", options:["Daily","Weekly","Monthly"] },
+    { k:"within", label:"Signal within last N bars", def:3, min:0, step:1 },
+    { k:"dir", label:"Direction", type:"select", def:"Both", options:["Both","Bullish","Bearish"] },
+    { k:"status", label:"Zone status", type:"select", def:"Any", options:["Any","Active","Target hit","SL hit","No zone"] },
+  ]},
+  { title: "Stock filters", open: false, fields: [
+    { k:"minPrice", label:"Price > (INR)", def:30, min:0, step:1 },
+    { k:"minMcap", label:"Mkt cap > (B INR)", def:5, min:0, step:0.5 },
+    { k:"minTurn", label:"Price × vol > (M INR)", def:50, min:0, step:5 },
+    { k:"minAboveLow", label:"Above 52W low by (%) ≥", def:0, min:0, step:5 },
+    { k:"sma1", label:"SMA 10 > SMA 50", type:"check", def:false },
+    { k:"sma2", label:"Price > SMA 20", type:"check", def:false },
+  ]},
+];
+const ALL = GROUPS.flatMap(g => g.fields);
+const $ = id => document.getElementById(id);
+const STORE = "breakout_params_v1";
+
+function buildParams() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (e) {}
+  $("params").innerHTML = GROUPS.map(g => `<details ${g.open ? "open" : ""}><summary>${g.title}</summary><div class="grid">` +
+    g.fields.map(f => {
+      const v = saved[f.k] !== undefined ? saved[f.k] : f.def;
+      if (f.type === "select")
+        return `<label>${f.label}<select id="p_${f.k}">${f.options.map(o => `<option ${o===v?"selected":""}>${o}</option>`).join("")}</select></label>`;
+      if (f.type === "check")
+        return `<label class="chk"><input type="checkbox" id="p_${f.k}" ${v ? "checked" : ""}> ${f.label}</label>`;
+      return `<label>${f.label}<input type="number" inputmode="decimal" id="p_${f.k}" value="${v}" min="${f.min ?? ""}" max="${f.max ?? ""}" step="${f.step}"></label>`;
+    }).join("") + `</div></details>`).join("");
+}
+
+function readParams() {
+  const P = {};
+  for (const f of ALL) {
+    const el = $("p_" + f.k);
+    if (f.type === "select") P[f.k] = el.value;
+    else if (f.type === "check") P[f.k] = el.checked;
+    else {
+      let v = parseFloat(el.value);
+      if (isNaN(v)) v = f.def;
+      if (f.min !== undefined) v = Math.max(f.min, v);
+      if (f.max !== undefined) v = Math.min(f.max, v);
+      P[f.k] = v;
+    }
+  }
+  try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
+  return P;
+}
+
+// ---------- Data + scan ----------
+let DATA = null, rows = [], sortKey = "bars", sortDir = 1;
+const fmt = (n, d = 2) => Number(n).toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const dstr = d => { const s = String(d); return s.slice(6) + "-" + s.slice(4, 6) + "-" + s.slice(0, 4); };
+function setStatus(m, err) { $("status").textContent = m; $("status").className = err ? "err" : ""; }
+
+function scan() {
+  if (!DATA) return;
+  const P = readParams();
+  rows = [];
+  for (const S of DATA.stocks) {
+    const last = S.c[S.c.length - 1];
+    if (S.p <= P.minPrice || S.m <= P.minMcap || S.to <= P.minTurn) continue;
+    if (P.minAboveLow > 0 && !(S.lo > 0 && (S.p / S.lo - 1) * 100 >= P.minAboveLow)) continue;
+    if (P.sma1 && !(smaLast(S.c, 10) > smaLast(S.c, 50))) continue;
+    if (P.sma2 && !(last > smaLast(S.c, 20))) continue;
+
+    const { signals } = analyze(S, P);
+    if (!signals.length) continue;
+    const sg = signals[signals.length - 1];
+    const bars = S.c.length - 1 - sg.bar;
+    if (bars > P.within) continue;
+    if (P.dir === "Bullish" && !sg.bull) continue;
+    if (P.dir === "Bearish" && sg.bull) continue;
+    const z = sg.zone;
+    const status = z ? z.status : "No zone";
+    if (P.status !== "Any" && P.status !== status) continue;
+
+    rows.push({
+      sym: S.s, bull: sg.bull, bars, date: S.d[sg.bar], level: sg.lvl,
+      entry: z ? z.entry : NaN, stop: z ? z.stop : NaN, tgt: z ? z.tgt : NaN,
+      slPct: z ? Math.abs(z.entry - z.stop) / z.entry * 100 : NaN,
+      tgPct: z ? Math.abs(z.tgt - z.entry) / z.entry * 100 : NaN,
+      status, ltp: last, mcap: S.m, turn: S.to
+    });
+  }
+  setStatus(`${rows.length} stocks matched (of ${DATA.stocks.length} scanned)`);
+  $("tableWrap").hidden = false;
+  render();
+}
+
+const HEADERS = [["sym","Symbol"],["bull","Signal"],["bars","Bars ago"],["date","Date"],["entry","Entry"],
+  ["stop","SL"],["slPct","SL %"],["tgt","Target"],["tgPct","Tgt %"],["status","Status"],["ltp","LTP"],["mcap","Mkt Cap (B)"],["turn","Turnover (M)"]];
+
+const COPY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
+const tvUrl = sym => "https://www.tradingview.com/chart/?symbol=" + encodeURIComponent("NSE:" + sym.replace(/[&-]/g, "_"));
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch (e) {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta); return ok;
+  } catch (e) { return false; }
+}
+
+function render() {
+  $("head").innerHTML = HEADERS.map(([k, l]) => `<th data-k="${k}">${l}${k === sortKey ? (sortDir > 0 ? " ▲" : " ▼") : ""}</th>`).join("");
+  const key = sortKey;
+  const sorted = [...rows].sort((a, b) => {
+    const x = a[key], y = b[key];
+    if (typeof x === "string") return x.localeCompare(y) * sortDir;
+    const xn = isNaN(x) ? Infinity : +x, yn = isNaN(y) ? Infinity : +y;
+    return (xn - yn) * sortDir;
+  });
+  const n2 = v => isNaN(v) ? "–" : fmt(v);
+  $("body").innerHTML = sorted.map(r => `<tr>
+    <td><div class="symc"><span>${esc(r.sym)}</span>
+      <a class="ic" href="${tvUrl(r.sym)}" target="_blank" rel="noopener" title="Open in TradingView">TV</a>
+      <button class="ic cp" data-s="${esc(r.sym)}" title="Copy symbol">${COPY_SVG}</button></div></td>
+    <td class="${r.bull ? "up" : "dn"}">${r.bull ? "▲ Breakout" : "▼ Breakdown"}</td>
+    <td>${r.bars}</td><td>${dstr(r.date)}</td>
+    <td>${n2(r.entry)}</td><td class="dn">${n2(r.stop)}</td><td>${isNaN(r.slPct) ? "–" : "-" + fmt(r.slPct)}%</td>
+    <td class="up">${n2(r.tgt)}</td><td>${isNaN(r.tgPct) ? "–" : "+" + fmt(r.tgPct)}%</td>
+    <td>${r.status}</td><td>${fmt(r.ltp)}</td><td>${fmt(r.mcap, 1)}</td><td>${fmt(r.turn, 1)}</td></tr>`).join("");
+  document.querySelectorAll("th").forEach(th => th.onclick = () => {
+    const k = th.dataset.k;
+    if (k === sortKey) sortDir *= -1; else { sortKey = k; sortDir = 1; }
+    render();
+  });
+}
+
+// ---------- "Update data" button: triggers the GitHub Actions workflow ----------
+const GH = { owner: "cinematicpravin", repo: "Breakout_Direct_link", branch: "main", workflow: "update.yml" };
+const TOKEN_KEY = "gh_token_v1";
+const getTok = () => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; } };
+const setTok = t => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) {} };
+const ghH = t => ({ Authorization: "Bearer " + t, Accept: "application/vnd.github+json" });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function latestRun(base, t) {
+  const r = await fetch(base + "/runs?event=workflow_dispatch&per_page=1", { headers: ghH(t) });
+  if (!r.ok) return null;
+  const j = await r.json();
+  return (j.workflow_runs || [])[0] || null;
+}
+
+async function updateData() {
+  let t = getTok();
+  if (!t) {
+    t = (prompt("Paste your GitHub token (fine-grained, this repo only, Actions: Read and write).\nIt is saved only in this browser.") || "").trim();
+    if (!t) return;
+    setTok(t);
+  }
+  const btn = $("upd_btn");
+  btn.disabled = true;
+  const base = `https://api.github.com/repos/${GH.owner}/${GH.repo}/actions/workflows/${GH.workflow}`;
+  try {
+    const prev = await latestRun(base, t);
+    const prevId = prev ? prev.id : 0;
+    const t0 = Date.now();
+    const r = await fetch(base + "/dispatches", { method: "POST", headers: ghH(t), body: JSON.stringify({ ref: GH.branch }) });
+    if (r.status !== 204) {
+      if ([401, 403, 404].includes(r.status)) setTok("");
+      const why = r.status === 401 || r.status === 403 ? "token invalid or missing 'Actions: Read and write' permission"
+                : r.status === 404 ? "repo/workflow not found, or token has no access to it"
+                : r.status === 422 ? "branch name wrong or workflow has no workflow_dispatch" : "unexpected error";
+      throw new Error(`HTTP ${r.status}: ${why}` + (getTok() ? "" : " (saved token cleared, tap Update data to enter a new one)"));
+    }
+    setStatus("Update started… takes ~10 min. Keep this tab open.");
+    for (let k = 0; k < 160; k++) {
+      await sleep(15000);
+      const run = await latestRun(base, t).catch(() => null);
+      if (!run || run.id <= prevId) { setStatus("Waiting for the run to start…"); continue; }
+      if (run.status === "completed") {
+        if (run.conclusion === "success") { setStatus("Update done, loading new data…"); for (const k in DATAS) delete DATAS[k]; await load(); }
+        else setStatus("Update failed (" + run.conclusion + "). Check GitHub → Actions.", true);
+        return;
+      }
+      setStatus(`Updating… ${run.status} (${Math.round((Date.now() - t0) / 60000)} min)`);
+    }
+    setStatus("Still running. Reload this page later to see the new data.");
+  } catch (e) {
+    setStatus("Update failed: " + e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+const TF_FILE = { Daily: "d", Weekly: "w", Monthly: "m" };
+const DATAS = {};   // cache: one data file per timeframe
+
+async function load() {
+  const tf = readParams().tf;
+  try {
+    if (!DATAS[tf]) {
+      // data files live on the "data" branch (single commit, force-pushed by the workflow)
+      const f = `data_${TF_FILE[tf]}.json`;
+      const RAW = `https://raw.githubusercontent.com/${GH.owner}/${GH.repo}/data/${f}`;
+      setStatus(`Loading ${tf} data…`);
+      let res = await fetch(RAW + "?v=" + Date.now()).catch(() => null);
+      if (!res || !res.ok) res = await fetch(f + "?v=" + Date.now());   // fallback: same-folder file
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      DATAS[tf] = await res.json();
+    }
+    DATA = DATAS[tf];
+    $("upd").textContent = tf + " data updated " + new Date(DATA.updated).toLocaleString();
+    scan();
+  } catch (e) {
+    $("upd").textContent = "no data";
+    setStatus(`${tf} data file not found. Run the 'Update data' workflow in GitHub → Actions first. (` + e.message + ")", true);
+  }
+}
+
+$("body").addEventListener("click", async ev => {
+  const b = ev.target.closest(".cp");
+  if (!b) return;
+  if (await copyText(b.dataset.s)) {
+    const old = b.innerHTML;
+    b.classList.add("ok"); b.textContent = "✓";
+    setTimeout(() => { b.classList.remove("ok"); b.innerHTML = old; }, 1000);
+  }
+});
+buildParams();
+$("upd_btn").onclick = updateData;
+$("tok").onclick = () => { setTok(""); setStatus("Saved token removed."); };
+$("run").onclick = load;
+$("p_tf").onchange = load;
+$("reset").onclick = () => { try { localStorage.removeItem(STORE); } catch (e) {} buildParams(); $("p_tf").onchange = load; load(); };
+load();
+</script>
+</body>
+</html>
